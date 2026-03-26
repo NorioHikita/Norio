@@ -222,18 +222,10 @@ def stream_team_agent(
                 api_messages.append({"role": "user", "content": tool_results})
 
             else:
-                # ツール呼び出しなし（最終回答）→ テキストをストリーミング
-
-                # 最終回答をストリーミングで再送信
-                with client.messages.stream(
-                    model="claude-opus-4-6",
-                    max_tokens=2048,
-                    system=ORCHESTRATOR_SYSTEM_PROMPT,
-                    tools=ORCHESTRATOR_TOOLS,
-                    messages=api_messages,
-                ) as stream:
-                    for text in stream.text_stream:
-                        yield f"data: {json.dumps({'type': 'text', 'text': text}, ensure_ascii=False)}\n\n"
+                # ツール呼び出しなし（最終回答）→ response.content のテキストをそのまま返す
+                for block in response.content:
+                    if block.type == "text" and block.text:
+                        yield f"data: {json.dumps({'type': 'text', 'text': block.text}, ensure_ascii=False)}\n\n"
 
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 break
