@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>コンサルティング分析システム</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ヘッダー -->
+  <header class="header">
+    <div class="header-brand">
+      <div class="icon">💡</div>
+      コンサルティング分析システム
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-secondary btn-sm" onclick="openReportModal()">
+        📄 レポート生成
+      </button>
+      <button class="btn btn-danger btn-sm" onclick="resetSession()">
+        🔄 リセット
+      </button>
+    </div>
+  </header>
+
+  <!-- メインレイアウト -->
+  <div class="main-layout">
+
+    <!-- 左サイドバー：フェーズ管理 -->
+    <aside class="sidebar">
+      <div class="sidebar-header">コンサルティングフェーズ</div>
+      <nav class="phase-list" id="phase-list"></nav>
+      <div class="sidebar-actions">
+        <button class="btn btn-outline btn-full btn-sm" onclick="openReportModal()">
+          📄 レポートを生成する
+        </button>
+      </div>
+    </aside>
+
+    <!-- チャットエリア -->
+    <main class="chat-area">
+      <!-- フェーズバー -->
+      <div class="chat-phase-bar">
+        <div class="chat-phase-label">
+          <span>🟢</span>
+          <span id="current-phase-label">フェーズ 1：初期ヒヤリング</span>
+        </div>
+        <div class="transition-hint" id="transition-hint"></div>
+      </div>
+
+      <!-- メッセージ一覧 -->
+      <div class="messages" id="messages">
+        <!-- タイピングインジケーター -->
+        <div class="typing-indicator" id="typing-indicator">
+          <div class="avatar" style="background:var(--accent);color:white">C</div>
+          <div class="typing-dots">
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- メッセージ入力 -->
+      <div class="input-area">
+        <div class="input-wrapper">
+          <textarea
+            id="message-input"
+            placeholder="困っていることを自由に入力してください… (Enter で送信、Shift+Enter で改行)"
+            rows="1"
+          ></textarea>
+          <button class="send-btn" id="send-btn" title="送信 (Enter)">
+            ↑
+          </button>
+        </div>
+        <div class="input-hint">Shift+Enter で改行</div>
+      </div>
+    </main>
+
+    <!-- 右パネル：コンテキスト -->
+    <aside class="context-panel">
+      <div class="context-header">
+        <span>セッション情報</span>
+      </div>
+      <div class="context-content" id="context-content">
+        <div class="context-empty">ヒヤリングが進むと、ここに相談内容のコンテキストが表示されます。</div>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<!-- レポートモーダル -->
+<div class="modal-overlay" id="report-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">📄 コンサルティングレポート</div>
+      <button class="modal-close" onclick="closeReportModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="report-content"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="copy-btn" onclick="copyReport()">📋 コピー</button>
+      <button class="btn btn-primary" onclick="downloadReport()">⬇ Markdownをダウンロード</button>
+      <button class="btn btn-secondary" onclick="closeReportModal()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
