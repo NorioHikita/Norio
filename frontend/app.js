@@ -250,6 +250,20 @@ async function sendMessage() {
 
     typingIndicator.classList.remove("visible");
 
+    // HTTP レベルのエラー（4xx/5xx）を先に処理
+    if (!res.ok) {
+      let detail = `サーバーエラー (HTTP ${res.status})`;
+      try {
+        const errJson = await res.json();
+        detail = errJson.detail || detail;
+      } catch (_) {}
+      bubble.innerHTML = `⚠️ ${escapeHtml(detail)}`;
+      state.messages.push({ role: "assistant", content: detail });
+      state.isStreaming = false;
+      sendBtn.disabled = false;
+      return;
+    }
+
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
 

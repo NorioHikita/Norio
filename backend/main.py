@@ -55,11 +55,25 @@ class ReportRequest(BaseModel):
     messages: list[MessageItem]
 
 
+# ─── 起動時チェック ──────────────────────────────────────────────────────────
+
+@app.on_event("startup")
+async def startup_check():
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if key:
+        print(f"[OK] ANTHROPIC_API_KEY が設定されています (先頭8文字: {key[:8]}...)")
+    else:
+        print("[ERROR] ANTHROPIC_API_KEY が設定されていません。")
+        print("        プロジェクトルートに .env ファイルを作成し、")
+        print("        ANTHROPIC_API_KEY=sk-ant-... を記入してください。")
+
+
 # ─── ヘルスチェック ──────────────────────────────────────────────────────────
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "phases": PHASE_LABELS}
+    has_key = bool(os.getenv("ANTHROPIC_API_KEY"))
+    return {"status": "ok", "phases": PHASE_LABELS, "api_key_set": has_key}
 
 
 # ─── チャット（ストリーミング） ───────────────────────────────────────────────
@@ -68,17 +82,28 @@ async def health():
 async def chat(request: ChatRequest):
     """
     現在のフェーズに応じたシステムプロンプトでClaude APIを呼び出し、
-    SSEストリームで応答を返す
+    SSEストリームで応答を返す。エラーもSSE形式で返すことでフロントエンドが
+    必ずメッセージを受け取れるようにする。
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY が設定されていません")
-
-    client = anthropic.Anthropic(api_key=api_key)
-    system_prompt = build_system_prompt(request.phase)
-    messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
     def generate():
+        if not api_key:
+            msg = (
+                "⚠️ **APIキーが設定されていません**\n\n"
+                "プロジェクトルート（`backend/` フォルダの1つ上）に `.env` ファイルを作成し、"
+                "以下を記入してください：\n\n"
+                "```\nANTHROPIC_API_KEY=sk-ant-xxxxxxxx\n```\n\n"
+                "APIキーは https://console.anthropic.com/ で取得できます。"
+            )
+            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+
+        client = anthropic.Anthropic(api_key=api_key)
+        system_prompt = build_system_prompt(request.phase)
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+
         try:
             with client.messages.stream(
                 model="claude-opus-4-6",
@@ -89,8 +114,14 @@ async def chat(request: ChatRequest):
                 for text in stream.text_stream:
                     yield f"data: {json.dumps({'type': 'text', 'text': text}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except anthropic.AuthenticationError:
+            msg = "⚠️ **APIキーが無効です。** `.env` ファイルのキーを確認してください。"
+            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except anthropic.APIError as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            msg = f"⚠️ **APIエラーが発生しました:** {e}"
+            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -111,7 +142,7 @@ async def suggest_phase_transition(request: PhaseTransitionRequest):
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY が設定されていません")
+        return {"should_transition": False, "next_phase": None, "reason": "APIキー未設定"}
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -172,15 +203,18 @@ async def generate_report(request: ReportRequest):
     会話履歴全体からコンサルティングレポートを生成する（Markdown形式）
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY が設定されていません")
-
-    client = anthropic.Anthropic(api_key=api_key)
     conversation_text = "\n\n".join(
         [f"【{'相談者' if m.role == 'user' else 'コンサルタント'}】\n{m.content}" for m in request.messages]
     )
 
     def generate():
+        if not api_key:
+            msg = "⚠️ APIキーが設定されていません。`.env` ファイルに `ANTHROPIC_API_KEY` を設定してください。"
+            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+
+        client = anthropic.Anthropic(api_key=api_key)
         try:
             with client.messages.stream(
                 model="claude-opus-4-6",
@@ -196,8 +230,14 @@ async def generate_report(request: ReportRequest):
                 for text in stream.text_stream:
                     yield f"data: {json.dumps({'type': 'text', 'text': text}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except anthropic.AuthenticationError:
+            msg = "⚠️ **APIキーが無効です。** `.env` ファイルのキーを確認してください。"
+            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except anthropic.APIError as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            msg = f"⚠️ APIエラー: {e}"
+            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(
         generate(),
