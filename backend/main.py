@@ -88,23 +88,23 @@ async def chat(request: ChatRequest):
     api_key = os.getenv("ANTHROPIC_API_KEY")
 
     def generate():
-        if not api_key:
-            msg = (
-                "⚠️ **APIキーが設定されていません**\n\n"
-                "プロジェクトルート（`backend/` フォルダの1つ上）に `.env` ファイルを作成し、"
-                "以下を記入してください：\n\n"
-                "```\nANTHROPIC_API_KEY=sk-ant-xxxxxxxx\n```\n\n"
-                "APIキーは https://console.anthropic.com/ で取得できます。"
-            )
-            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            return
-
-        client = anthropic.Anthropic(api_key=api_key)
-        system_prompt = build_system_prompt(request.phase)
-        messages = [{"role": m.role, "content": m.content} for m in request.messages]
-
         try:
+            if not api_key:
+                msg = (
+                    "⚠️ **APIキーが設定されていません**\n\n"
+                    "プロジェクトルート（`backend/` フォルダの1つ上）に `.env` ファイルを作成し、"
+                    "以下を記入してください：\n\n"
+                    "```\nANTHROPIC_API_KEY=sk-ant-xxxxxxxx\n```\n\n"
+                    "APIキーは https://console.anthropic.com/ で取得できます。"
+                )
+                yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
+
+            client = anthropic.Anthropic(api_key=api_key)
+            system_prompt = build_system_prompt(request.phase)
+            messages = [{"role": m.role, "content": m.content} for m in request.messages]
+
             with client.messages.stream(
                 model="claude-opus-4-6",
                 max_tokens=2048,
@@ -114,12 +114,25 @@ async def chat(request: ChatRequest):
                 for text in stream.text_stream:
                     yield f"data: {json.dumps({'type': 'text', 'text': text}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
         except anthropic.AuthenticationError:
             msg = "⚠️ **APIキーが無効です。** `.env` ファイルのキーを確認してください。"
             yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except anthropic.APIConnectionError as e:
+            msg = f"⚠️ **Anthropic APIへの接続に失敗しました。**\nネットワーク接続またはプロキシ設定を確認してください。\n\n詳細: `{type(e).__name__}: {e}`"
+            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except anthropic.APIError as e:
-            msg = f"⚠️ **APIエラーが発生しました:** {e}"
+            msg = f"⚠️ **APIエラーが発生しました:** `{type(e).__name__}: {e}`"
+            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            # 予期しない例外もSSEで返すことで接続が突然切れないようにする
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[ERROR] generate() 内で予期しない例外:\n{tb}")
+            msg = f"⚠️ **予期しないエラーが発生しました:** `{type(e).__name__}: {e}`"
             yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
@@ -208,14 +221,14 @@ async def generate_report(request: ReportRequest):
     )
 
     def generate():
-        if not api_key:
-            msg = "⚠️ APIキーが設定されていません。`.env` ファイルに `ANTHROPIC_API_KEY` を設定してください。"
-            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            return
-
-        client = anthropic.Anthropic(api_key=api_key)
         try:
+            if not api_key:
+                msg = "⚠️ APIキーが設定されていません。`.env` ファイルに `ANTHROPIC_API_KEY` を設定してください。"
+                yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
+
+            client = anthropic.Anthropic(api_key=api_key)
             with client.messages.stream(
                 model="claude-opus-4-6",
                 max_tokens=4096,
@@ -230,12 +243,23 @@ async def generate_report(request: ReportRequest):
                 for text in stream.text_stream:
                     yield f"data: {json.dumps({'type': 'text', 'text': text}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
         except anthropic.AuthenticationError:
             msg = "⚠️ **APIキーが無効です。** `.env` ファイルのキーを確認してください。"
             yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except anthropic.APIConnectionError as e:
+            msg = f"⚠️ **Anthropic APIへの接続に失敗しました。**\nネットワーク接続を確認してください。\n\n詳細: `{type(e).__name__}: {e}`"
+            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except anthropic.APIError as e:
-            msg = f"⚠️ APIエラー: {e}"
+            msg = f"⚠️ APIエラー: `{type(e).__name__}: {e}`"
+            yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] generate_report() 内で予期しない例外:\n{traceback.format_exc()}")
+            msg = f"⚠️ **予期しないエラー:** `{type(e).__name__}: {e}`"
             yield f"data: {json.dumps({'type': 'text', 'text': msg}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
