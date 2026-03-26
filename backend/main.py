@@ -7,6 +7,7 @@ ERP・データ統合基盤・ビジネスプロセスに関する相談の
 
 import json
 import os
+from pathlib import Path
 from typing import Optional
 
 import anthropic
@@ -19,7 +20,9 @@ from pydantic import BaseModel
 
 from consulting_prompts import PHASE_LABELS, REPORT_SYSTEM_PROMPT, build_system_prompt
 
-load_dotenv()
+# プロジェクトルートの .env を優先、次にシステム環境変数を使用
+load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv()  # fallback: カレントディレクトリの .env
 
 app = FastAPI(title="コンサルティング分析システム", version="1.0.0")
 
