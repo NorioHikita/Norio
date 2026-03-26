@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIイノベーション推進室 チーム構成支援</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* ─── エージェントパネル専用スタイル ─────────────────────────────── */
+    .agent-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    .agent-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      user-select: none;
+      background: var(--bg);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .agent-panel-header:hover { background: var(--hover); }
+    .agent-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--accent);
+      color: white;
+    }
+    .agent-badge.calling  { background: #f59e0b; }
+    .agent-badge.done     { background: #10b981; }
+    .agent-panel-body {
+      padding: 12px 14px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      border-top: 1px solid var(--border);
+      white-space: pre-wrap;
+      line-height: 1.6;
+    }
+    .agent-panel-body.hidden { display: none; }
+    .agent-toggle-icon { margin-left: auto; transition: transform 0.2s; }
+    .agent-toggle-icon.open { transform: rotate(180deg); }
+
+    /* ─── エージェントサイドバー ─────────────────────────────────────── */
+    .agents-sidebar {
+      width: 220px;
+      min-width: 220px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 16px 12px;
+      gap: 8px;
+    }
+    .agents-sidebar-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .agent-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      border: 1px solid transparent;
+      transition: all 0.2s;
+    }
+    .agent-item.active {
+      background: #fef3c7;
+      border-color: #f59e0b;
+      color: #92400e;
+    }
+    .agent-item.done {
+      background: #d1fae5;
+      border-color: #10b981;
+      color: #065f46;
+    }
+    .agent-icon { font-size: 16px; }
+    .agent-status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--border);
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .agent-status-dot.active { background: #f59e0b; animation: pulse 1s infinite; }
+    .agent-status-dot.done   { background: #10b981; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    /* ─── レイアウト調整 ─────────────────────────────────────────────── */
+    .ai-team-layout {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .ai-team-chat {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    /* ─── ウェルカムカード ──────────────────────────────────────────── */
+    .welcome-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin: 16px;
+    }
+    .welcome-card h2 { font-size: 18px; margin: 0 0 6px; }
+    .welcome-card p  { font-size: 13px; opacity: 0.85; margin: 0 0 12px; }
+    .welcome-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .welcome-pill {
+      background: rgba(255,255,255,0.2);
+      border-radius: 20px;
+      padding: 3px 10px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .welcome-pill:hover { background: rgba(255,255,255,0.35); }
+
+    /* ─── ヘッダーナビ ──────────────────────────────────────────────── */
+    .nav-tabs {
+      display: flex;
+      gap: 4px;
+    }
+    .nav-tab {
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+    .nav-tab:hover { background: var(--hover); color: var(--text); }
+    .nav-tab.active {
+      background: var(--accent);
+      color: white;
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ヘッダー -->
+  <header class="header">
+    <div class="header-brand">
+      <div class="icon">🚀</div>
+      AIイノベーション推進室 チーム構成支援
+    </div>
+    <nav class="nav-tabs">
+      <a href="index.html" class="nav-tab">💡 コンサルティング</a>
+      <a href="ai-team.html" class="nav-tab active">🚀 チーム構成</a>
+    </nav>
+    <div class="header-actions">
+      <button class="btn btn-danger btn-sm" onclick="resetChat()">🔄 リセット</button>
+    </div>
+  </header>
+
+  <!-- メインレイアウト -->
+  <div class="ai-team-layout">
+
+    <!-- エージェントサイドバー -->
+    <aside class="agents-sidebar">
+      <div class="agents-sidebar-title">専門エージェント</div>
+      <div class="agent-item" data-key="orchestrator" id="agent-orchestrator">
+        <span class="agent-icon">🎯</span>
+        <span>オーケストレーター</span>
+        <div class="agent-status-dot" id="dot-orchestrator"></div>
+      </div>
+      <div class="agent-item" data-key="strategy" id="agent-strategy">
+        <span class="agent-icon">📊</span>
+        <span>AI戦略</span>
+        <div class="agent-status-dot" id="dot-strategy"></div>
+      </div>
+      <div class="agent-item" data-key="hiring" id="agent-hiring">
+        <span class="agent-icon">👥</span>
+        <span>採用設計</span>
+        <div class="agent-status-dot" id="dot-hiring"></div>
+      </div>
+      <div class="agent-item" data-key="skills" id="agent-skills">
+        <span class="agent-icon">🎓</span>
+        <span>スキルアセスメント</span>
+        <div class="agent-status-dot" id="dot-skills"></div>
+      </div>
+      <div class="agent-item" data-key="governance" id="agent-governance">
+        <span class="agent-icon">🛡️</span>
+        <span>ガバナンス</span>
+        <div class="agent-status-dot" id="dot-governance"></div>
+      </div>
+      <div class="agent-item" data-key="tech" id="agent-tech">
+        <span class="agent-icon">⚙️</span>
+        <span>技術・Ambient</span>
+        <div class="agent-status-dot" id="dot-tech"></div>
+      </div>
+    </aside>
+
+    <!-- チャットエリア -->
+    <main class="ai-team-chat">
+
+      <!-- メッセージ一覧 -->
+      <div class="messages" id="messages">
+
+        <!-- ウェルカムカード -->
+        <div class="welcome-card" id="welcome-card">
+          <h2>AIイノベーション推進室 チーム構成アシスタント</h2>
+          <p>
+            全社AI活用革命と3年後のAmbient移行を目指すチームを一緒に設計します。<br>
+            5つの専門エージェントが協力して、戦略・採用・スキル・ガバナンス・技術を包括的にサポートします。
+          </p>
+          <div class="welcome-pills">
+            <div class="welcome-pill" onclick="sendQuickMessage('チームの最小構成（5名）を教えてください')">チーム最小構成を教えて</div>
+            <div class="welcome-pill" onclick="sendQuickMessage('3年間のロードマップを設計してください')">3年ロードマップを設計</div>
+            <div class="welcome-pill" onclick="sendQuickMessage('AIガバナンスポリシーの策定方法を教えてください')">ガバナンスポリシー策定</div>
+            <div class="welcome-pill" onclick="sendQuickMessage('Ambient移行に必要な技術スタックを教えてください')">Ambient技術スタック</div>
+            <div class="welcome-pill" onclick="sendQuickMessage('チームに必要なスキルセットと育成計画を教えてください')">スキル・育成計画</div>
+            <div class="welcome-pill" onclick="sendQuickMessage('テクニカルリードの採用要件を詳しく教えてください')">テクニカルリード採用要件</div>
+          </div>
+        </div>
+
+        <!-- タイピングインジケーター -->
+        <div class="typing-indicator" id="typing-indicator">
+          <div class="avatar" style="background:var(--accent);color:white">AI</div>
+          <div class="typing-dots">
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- メッセージ入力 -->
+      <div class="input-area">
+        <div class="input-wrapper">
+          <textarea
+            id="message-input"
+            placeholder="AIイノベーション推進室のチーム構成について質問してください… (Enter で送信)"
+            rows="1"
+          ></textarea>
+          <button class="send-btn" id="send-btn" title="送信 (Enter)">↑</button>
+        </div>
+        <div class="input-hint">Shift+Enter で改行 ／ 専門エージェントが協力して回答します</div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+// ─── 状態管理 ───────────────────────────────────────────────────────────────
+
+const state = {
+  messages: [],
+  isStreaming: false,
+};
+
+const AGENT_ICONS = {
+  'AI戦略エージェント':            { key: 'strategy',    icon: '📊' },
+  '採用設計エージェント':           { key: 'hiring',      icon: '👥' },
+  'スキルアセスメントエージェント':  { key: 'skills',      icon: '🎓' },
+  'ガバナンスエージェント':         { key: 'governance',  icon: '🛡️' },
+  '技術・Ambientエージェント':      { key: 'tech',        icon: '⚙️' },
+  'オーケストレーター':             { key: 'orchestrator', icon: '🎯' },
+};
+
+// ─── DOM ───────────────────────────────────────────────────────────────────
+
+const messagesEl  = document.getElementById('messages');
+const inputEl     = document.getElementById('message-input');
+const sendBtn     = document.getElementById('send-btn');
+const typingEl    = document.getElementById('typing-indicator');
+const welcomeCard = document.getElementById('welcome-card');
+
+// ─── エージェント状態更新 ───────────────────────────────────────────────────
+
+function setAgentStatus(agentLabel, status) {
+  const info = AGENT_ICONS[agentLabel];
+  if (!info) return;
+  const item = document.getElementById(`agent-${info.key}`);
+  const dot  = document.getElementById(`dot-${info.key}`);
+  if (!item || !dot) return;
+
+  item.className = `agent-item ${status}`;
+  dot.className  = `agent-status-dot ${status}`;
+}
+
+function resetAgentStatuses() {
+  Object.values(AGENT_ICONS).forEach(({ key }) => {
+    const item = document.getElementById(`agent-${key}`);
+    const dot  = document.getElementById(`dot-${key}`);
+    if (item) item.className = 'agent-item';
+    if (dot)  dot.className  = 'agent-status-dot';
+  });
+}
+
+// ─── メッセージ描画 ─────────────────────────────────────────────────────────
+
+function appendUserMessage(text) {
+  const div = document.createElement('div');
+  div.className = 'message user';
+  div.innerHTML = `
+    <div class="message-content">
+      <div class="message-text">${escapeHtml(text)}</div>
+    </div>
+    <div class="avatar user-avatar">あ</div>
+  `;
+  messagesEl.insertBefore(div, typingEl);
+  scrollToBottom();
+}
+
+function createAssistantMessage() {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'message assistant';
+  wrapper.innerHTML = `
+    <div class="avatar" style="background:var(--accent);color:white">AI</div>
+    <div class="message-content">
+      <div class="agent-calls-container" id="agent-calls-container"></div>
+      <div class="message-text" id="assistant-streaming-text"></div>
+    </div>
+  `;
+  messagesEl.insertBefore(wrapper, typingEl);
+  scrollToBottom();
+  return wrapper;
+}
+
+function appendAgentCallPanel(container, agentLabel, query) {
+  const info = AGENT_ICONS[agentLabel] || { icon: '🤖' };
+  const panel = document.createElement('div');
+  panel.className = 'agent-panel';
+  panel.dataset.agent = agentLabel;
+  panel.innerHTML = `
+    <div class="agent-panel-header" onclick="togglePanel(this)">
+      <span>${info.icon}</span>
+      <span class="agent-badge calling">呼び出し中</span>
+      <span>${escapeHtml(agentLabel)}</span>
+      <span style="font-weight:400;color:var(--text-muted);font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(query)}</span>
+      <span class="agent-toggle-icon open">▼</span>
+    </div>
+    <div class="agent-panel-body">${escapeHtml(query)}</div>
+  `;
+  container.appendChild(panel);
+  scrollToBottom();
+  return panel;
+}
+
+function updateAgentPanelResult(panel, agentLabel, result) {
+  const badge  = panel.querySelector('.agent-badge');
+  const body   = panel.querySelector('.agent-panel-body');
+  const info   = AGENT_ICONS[agentLabel] || { icon: '🤖' };
+  if (badge) {
+    badge.className = 'agent-badge done';
+    badge.textContent = '完了';
+  }
+  if (body) {
+    body.textContent = result.replace(/^\[[^\]]+の回答\]\n/, '');
+  }
+}
+
+function togglePanel(header) {
+  const icon = header.querySelector('.agent-toggle-icon');
+  const body = header.nextElementSibling;
+  if (!body) return;
+  const isHidden = body.classList.toggle('hidden');
+  if (icon) icon.classList.toggle('open', !isHidden);
+}
+
+// ─── 送信・受信 ─────────────────────────────────────────────────────────────
+
+async function sendMessage(text) {
+  if (!text.trim() || state.isStreaming) return;
+
+  if (welcomeCard) welcomeCard.style.display = 'none';
+
+  state.isStreaming = true;
+  sendBtn.disabled = true;
+  typingEl.classList.add('visible');
+  resetAgentStatuses();
+  setAgentStatus('オーケストレーター', 'active');
+
+  state.messages.push({ role: 'user', content: text });
+  appendUserMessage(text);
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+
+  const msgWrapper  = createAssistantMessage();
+  const callsContainer = msgWrapper.querySelector('#agent-calls-container');
+  const streamingText  = msgWrapper.querySelector('#assistant-streaming-text');
+
+  let fullText = '';
+  const agentPanels = {};
+
+  try {
+    const response = await fetch('/api/ai-team/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: state.messages }),
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const reader  = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          handleSSEEvent(event, callsContainer, streamingText, agentPanels, fullText);
+          if (event.type === 'text') fullText += event.text;
+        } catch (_) {}
+      }
+    }
+
+    // 最終テキストを会話履歴に追加
+    if (fullText) {
+      state.messages.push({ role: 'assistant', content: fullText });
+    }
+
+  } catch (err) {
+    streamingText.textContent = `エラーが発生しました: ${err.message}`;
+  } finally {
+    state.isStreaming = false;
+    sendBtn.disabled = false;
+    typingEl.classList.remove('visible');
+    setAgentStatus('オーケストレーター', 'done');
+    scrollToBottom();
+  }
+}
+
+function handleSSEEvent(event, callsContainer, streamingText, agentPanels, fullText) {
+  switch (event.type) {
+    case 'agent_call': {
+      const panel = appendAgentCallPanel(callsContainer, event.agent, event.query);
+      agentPanels[event.agent] = panel;
+      setAgentStatus(event.agent, 'active');
+      typingEl.classList.remove('visible');
+      break;
+    }
+    case 'agent_result': {
+      const panel = agentPanels[event.agent];
+      if (panel) updateAgentPanelResult(panel, event.agent, event.result);
+      setAgentStatus(event.agent, 'done');
+      break;
+    }
+    case 'text': {
+      streamingText.textContent += event.text;
+      scrollToBottom();
+      break;
+    }
+    case 'done':
+      break;
+    case 'error':
+      streamingText.textContent = `エラー: ${event.message}`;
+      break;
+  }
+}
+
+// ─── クイック送信 ────────────────────────────────────────────────────────────
+
+function sendQuickMessage(text) {
+  inputEl.value = text;
+  sendMessage(text);
+}
+
+// ─── リセット ────────────────────────────────────────────────────────────────
+
+function resetChat() {
+  state.messages = [];
+  state.isStreaming = false;
+
+  // ウェルカムカード以降のメッセージを削除
+  const allMessages = messagesEl.querySelectorAll('.message');
+  allMessages.forEach(m => m.remove());
+
+  if (welcomeCard) welcomeCard.style.display = '';
+  resetAgentStatuses();
+  typingEl.classList.remove('visible');
+}
+
+// ─── ユーティリティ ──────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function scrollToBottom() {
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// ─── イベントリスナー ────────────────────────────────────────────────────────
+
+sendBtn.addEventListener('click', () => sendMessage(inputEl.value));
+
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage(inputEl.value);
+  }
+});
+
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + 'px';
+});
+</script>
+</body>
+</html>
