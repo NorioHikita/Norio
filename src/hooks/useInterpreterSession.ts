@@ -1,43 +1,34 @@
 import { useRef, useCallback, useState } from 'react';
-import type { SessionConfig, TranscriptSegment, Direction } from '../types/realtime';
+import type { SessionConfig, TranscriptSegment, Direction, SpeakerId } from '../types/realtime';
 
 const REALTIME_URL = 'wss://api.openai.com/v1/realtime';
 const MODEL = 'gpt-4o-realtime-preview-2024-12-17';
 
-const INSTRUCTIONS = `You are a professional simultaneous interpreter working between Japanese and English.
+const SYSTEM_PROMPT = `You are a real-time interpreter between Japanese and English.
 
-Your ONLY function is translation. Follow these rules exactly:
+Strict rules with zero exceptions:
+1. You hear Japanese → output the English translation only. Nothing else.
+2. You hear English → output the Japanese translation only. Nothing else.
+3. You hear silence, noise, or unclear audio → output absolutely nothing. Zero characters.
+4. NEVER output anything except the translated words. No "I see", no "Please speak", no explanations.`;
 
-1. If you hear Japanese speech → translate to natural, fluent English immediately
-2. If you hear English speech → translate to natural, fluent Japanese immediately
-3. Begin your translation as soon as you understand the first phrase — do NOT wait for the speaker to finish
-4. Output ONLY the translated words. Never output the original language.
-5. If you hear silence, noise, or audio too unclear to translate → output absolutely NOTHING. Zero characters.
-6. You are NOT a conversational assistant. NEVER say things like:
-   - "I'm sorry..."
-   - "Please speak in..."
-   - "I will translate..."
-   - "[沈黙]" "[Silence]" "(no speech)"
-   - Any explanation or commentary whatsoever
-7. Your output must be ONLY the translation of clearly spoken words.`;
-
-// ── Output validation ──────────────────────────────────────────────────────────
-
-const META_PATTERNS = [
-  /^i'?m sorry/i,
-  /please (start )?speak/i,
-  /i (will|can) translate/i,
-  /please (go ahead|continue)/i,
-  /^sure[,.\s]/i,
-  /\[.*?(沈黙|silence|silent).*?\]/i,
-  /【.*?】/,
-  /^\(.*?\)$/,
+const META_PATTERNS: RegExp[] = [
+  /^[\s.…。、・ー]+$/,
+  /i'?m sorry/i,
+  /please (speak|say|try|go ahead|continue|repeat|start)/i,
+  /i (will|can|cannot|can't|don't) (translate|hear|understand|detect|interpret)/i,
+  /^(sure|ok|okay|yes|no|hmm|um|uh)[,.\s!]*$/i,
+  /【[^】]*】/,
+  /\[[^\]]*\]/,
+  /^\([^)]*\)$/,
   /no (clear )?speech/i,
-  /silence/i,
-  /沈黙/,
-  /i (don't|cannot|can't) (hear|understand|detect)/i,
+  /\bsilence\b/i,
+  /\b沈黙\b/,
+  /\bunclear\b/i,
   /not in (japanese|english)/i,
-  /^\.{2,}$/,
+  /^[.…]{2,}$/,
+  /translation:/i,
+  /translator:/i,
 ];
 
 function isMeta(text: string): boolean {
@@ -45,12 +36,12 @@ function isMeta(text: string): boolean {
   return t.length === 0 || META_PATTERNS.some((p) => p.test(t));
 }
 
+// Determine what language the model output (= what it translated INTO)
 function detectDirection(text: string): Direction {
-  const hasJapanese = /[぀-ゟ゠-ヿ一-鿿]/.test(text);
-  return hasJapanese ? 'en-ja' : 'ja-en';
+  return /[぀-ゟ゠-ヿ一-鿿]/.test(text) ? 'en-ja' : 'ja-en';
 }
 
-function newSegmentId() {
+function newId(): string {
   return `seg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
@@ -59,49 +50,62 @@ export function useInterpreterSession() {
   const [transcripts, setTranscripts] = useState<TranscriptSegment[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const onAudioPlayChunkRef = useRef<((chunk: string) => void) | null>(null);
+  const configRef = useRef<SessionConfig | null>(null);
+  const onPlayChunkRef = useRef<((chunk: string) => void) | null>(null);
 
   const responseActiveRef = useRef(false);
   const pendingCommitRef = useRef(false);
-  const currentSegmentIdRef = useRef<string | null>(null);
+  const currentSegIdRef = useRef<string | null>(null);
 
-  // ── Response queue ─────────────────────────────────────────────────────────
+  // ── Response flow ──────────────────────────────────────────────────────────
 
   const startResponse = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     responseActiveRef.current = true;
     pendingCommitRef.current = false;
-    wsRef.current.send(JSON.stringify({ type: 'response.create' }));
+    ws.send(JSON.stringify({ type: 'response.create' }));
   }, []);
 
-  // ── Events ─────────────────────────────────────────────────────────────────
+  // ── Event handler ──────────────────────────────────────────────────────────
 
-  const handleEvent = useCallback(
-    (ev: Record<string, unknown>, config: SessionConfig) => {
-      switch (ev.type) {
+  const handleMessage = useCallback(
+    (raw: string) => {
+      let ev: Record<string, unknown>;
+      try {
+        ev = JSON.parse(raw);
+      } catch {
+        return;
+      }
+
+      const config = configRef.current;
+
+      switch (ev.type as string) {
         case 'response.created': {
-          const segId = newSegmentId();
-          currentSegmentIdRef.current = segId;
-          const seg: TranscriptSegment = {
-            id: segId,
-            speaker: 'A',       // placeholder; overwritten at response.done
-            direction: 'ja-en', // placeholder
-            inputLabel: '…',
-            outputLabel: '…',
-            outputText: '',
-            outputStreaming: true,
-            timestamp: new Date(),
-          };
-          setTranscripts((prev) => [...prev, seg]);
+          const segId = newId();
+          currentSegIdRef.current = segId;
+          setTranscripts((prev) => [
+            ...prev,
+            {
+              id: segId,
+              speaker: 'A' as SpeakerId,
+              direction: 'ja-en' as Direction,
+              inputLabel: '通訳中…',
+              outputLabel: '…',
+              outputText: '',
+              outputStreaming: true,
+              timestamp: new Date(),
+            },
+          ]);
           break;
         }
 
         case 'response.audio.delta':
-          if (ev.delta) onAudioPlayChunkRef.current?.(ev.delta as string);
+          if (ev.delta) onPlayChunkRef.current?.(ev.delta as string);
           break;
 
         case 'response.audio_transcript.delta': {
-          const segId = currentSegmentIdRef.current;
+          const segId = currentSegIdRef.current;
           if (segId && ev.delta) {
             setTranscripts((prev) =>
               prev.map((s) =>
@@ -116,59 +120,68 @@ export function useInterpreterSession() {
 
         case 'response.done': {
           responseActiveRef.current = false;
-          const segId = currentSegmentIdRef.current;
+          const segId = currentSegIdRef.current;
+          currentSegIdRef.current = null;
+
           if (segId) {
             setTranscripts((prev) => {
               const seg = prev.find((s) => s.id === segId);
-              if (!seg) return prev;
-
-              // Drop empty or meta-commentary segments
-              if (isMeta(seg.outputText)) {
+              if (!seg || isMeta(seg.outputText)) {
                 return prev.filter((s) => s.id !== segId);
               }
 
-              // Determine direction from what the model output
               const direction = detectDirection(seg.outputText);
               const isJaOut = direction === 'en-ja';
 
-              // Determine speaker labels from config
-              const speakerWhoSpoke =
-                isJaOut ? config.speakerB : config.speakerA; // B spoke English → JA out
-              const outputLang = isJaOut ? '日本語' : 'English';
+              // Find the speaker whose native language matches the INPUT language
+              const inputLang = isJaOut ? 'en' : 'ja';
+              const speakerCfg = config
+                ? (config.speakerA.language === inputLang ? config.speakerA : config.speakerB)
+                : null;
+
+              const speaker: SpeakerId = speakerCfg?.id ?? 'A';
+              const inputLabel = speakerCfg
+                ? `${speakerCfg.name}（${isJaOut ? 'English' : '日本語'}）`
+                : '…';
+              const outputLabel = isJaOut ? '日本語' : 'English';
 
               return prev.map((s) =>
                 s.id === segId
-                  ? {
-                      ...s,
-                      direction,
-                      speaker: speakerWhoSpoke.id,
-                      inputLabel: `${speakerWhoSpoke.name}（${isJaOut ? 'English' : '日本語'}）`,
-                      outputLabel: outputLang,
-                      outputStreaming: false,
-                    }
+                  ? { ...s, direction, speaker, inputLabel, outputLabel, outputStreaming: false }
                   : s,
               );
             });
           }
+
           if (pendingCommitRef.current) startResponse();
           break;
         }
 
-        case 'error':
-          console.error('Session error:', ev);
+        case 'error': {
+          console.error('[WS] error event:', ev);
           responseActiveRef.current = false;
+          const segId = currentSegIdRef.current;
+          if (segId) {
+            currentSegIdRef.current = null;
+            setTranscripts((prev) => prev.filter((s) => s.id !== segId));
+          }
           break;
+        }
       }
     },
     [startResponse],
   );
 
-  // ── Connect ────────────────────────────────────────────────────────────────
+  // ── Connect / Disconnect ───────────────────────────────────────────────────
 
   const connect = useCallback(
-    (config: SessionConfig, onAudioPlayChunk: (chunk: string) => void) => {
-      onAudioPlayChunkRef.current = onAudioPlayChunk;
+    (config: SessionConfig, onPlayChunk: (chunk: string) => void) => {
+      configRef.current = config;
+      onPlayChunkRef.current = onPlayChunk;
       wsRef.current?.close();
+      responseActiveRef.current = false;
+      pendingCommitRef.current = false;
+      currentSegIdRef.current = null;
 
       const ws = new WebSocket(`${REALTIME_URL}?model=${MODEL}`, [
         'realtime',
@@ -178,52 +191,55 @@ export function useInterpreterSession() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        ws.send(JSON.stringify({
-          type: 'session.update',
-          session: {
-            modalities: ['text', 'audio'],
-            instructions: INSTRUCTIONS,
-            voice: config.voice,
-            input_audio_format: 'pcm16',
-            output_audio_format: 'pcm16',
-            turn_detection: null,
-          },
-        }));
+        ws.send(
+          JSON.stringify({
+            type: 'session.update',
+            session: {
+              modalities: ['text', 'audio'],
+              instructions: SYSTEM_PROMPT,
+              voice: config.voice,
+              input_audio_format: 'pcm16',
+              output_audio_format: 'pcm16',
+              turn_detection: null,
+            },
+          }),
+        );
         setIsConnected(true);
       };
 
-      ws.onmessage = (event) => {
-        try {
-          handleEvent(JSON.parse(event.data as string), config);
-        } catch (e) {
-          console.error('Parse error:', e);
-        }
-      };
-
-      ws.onerror = () => console.error('WebSocket error');
+      ws.onmessage = (e) => handleMessage(e.data as string);
+      ws.onerror = (e) => console.error('[WS] error', e);
       ws.onclose = () => {
         responseActiveRef.current = false;
         pendingCommitRef.current = false;
         setIsConnected(false);
       };
     },
-    [handleEvent],
+    [handleMessage],
   );
+
+  const disconnect = useCallback(() => {
+    wsRef.current?.close();
+    wsRef.current = null;
+    responseActiveRef.current = false;
+    pendingCommitRef.current = false;
+    currentSegIdRef.current = null;
+    setIsConnected(false);
+  }, []);
 
   // ── Audio ──────────────────────────────────────────────────────────────────
 
   const sendAudioChunk = useCallback((base64: string) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'input_audio_buffer.append',
-        audio: base64,
-      }));
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: base64 }));
     }
   }, []);
 
   const commitAndTranslate = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
     if (!responseActiveRef.current) {
       startResponse();
     } else {
@@ -231,14 +247,12 @@ export function useInterpreterSession() {
     }
   }, [startResponse]);
 
-  // ── Disconnect ─────────────────────────────────────────────────────────────
-
-  const disconnect = useCallback(() => {
-    wsRef.current?.close();
-    wsRef.current = null;
-    responseActiveRef.current = false;
-    pendingCommitRef.current = false;
-    setIsConnected(false);
+  // Clear the server-side audio buffer without triggering a response
+  const clearAudioBuffer = useCallback(() => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
+    }
   }, []);
 
   const clearTranscripts = useCallback(() => setTranscripts([]), []);
@@ -250,6 +264,7 @@ export function useInterpreterSession() {
     disconnect,
     sendAudioChunk,
     commitAndTranslate,
+    clearAudioBuffer,
     clearTranscripts,
   };
 }

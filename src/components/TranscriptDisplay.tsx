@@ -10,6 +10,11 @@ function Cursor() {
   return <span className="cursor">▋</span>;
 }
 
+const OUTPUT_FLAG: Record<string, string> = {
+  'ja-en': '🇺🇸',  // input was Japanese, output is English
+  'en-ja': '🇯🇵',  // input was English, output is Japanese
+};
+
 export function TranscriptDisplay({ segments, onClear }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -20,7 +25,7 @@ export function TranscriptDisplay({ segments, onClear }: Props) {
   if (segments.length === 0) {
     return (
       <div className="transcript-empty">
-        <p>話者ボタンを押して話しかけると通訳結果が表示されます</p>
+        <p>通訳を開始して話しかけると、ここに翻訳結果が表示されます</p>
         <p className="transcript-empty-sub">
           発話から約1〜2秒で通訳音声が流れ始めます
         </p>
@@ -38,6 +43,7 @@ export function TranscriptDisplay({ segments, onClear }: Props) {
 
       {segments.map((seg) => {
         const isA = seg.speaker === 'A';
+        const outputFlag = OUTPUT_FLAG[seg.direction] ?? '🌐';
         return (
           <div
             key={seg.id}
@@ -49,14 +55,20 @@ export function TranscriptDisplay({ segments, onClear }: Props) {
                 minute: '2-digit',
                 second: '2-digit',
               })}
-              <span className="segment-speaker-badge" style={{ color: isA ? '#4f6ef7' : '#34d399' }}>
+              <span
+                className="segment-speaker-badge"
+                style={{ color: isA ? '#4f6ef7' : '#34d399' }}
+              >
                 {seg.inputLabel}
               </span>
             </div>
 
             <div className="segment-row segment-translation">
-              <div className="segment-label" style={{ color: isA ? '#60a5fa' : '#34d399' }}>
-                <span>{isA ? '🇺🇸' : '🇯🇵'}</span>
+              <div
+                className="segment-label"
+                style={{ color: isA ? '#60a5fa' : '#34d399' }}
+              >
+                <span>{outputFlag}</span>
                 <span>{seg.outputLabel}</span>
               </div>
               <div className="segment-text">

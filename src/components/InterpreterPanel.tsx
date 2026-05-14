@@ -14,7 +14,7 @@ interface Props {
 export function InterpreterPanel({ config, onReset }: Props) {
   const [isRunning, setIsRunning] = useState(false);
 
-  const sessions = useInterpreterSession();
+  const session = useInterpreterSession();
   const capture = useAudioCapture();
   const player = useAudioPlayer(
     useCallback((playing: boolean) => capture.setIsPlaying(playing), [capture]),
@@ -22,40 +22,44 @@ export function InterpreterPanel({ config, onReset }: Props) {
 
   const handleStart = useCallback(async () => {
     try {
+      session.connect(config, (chunk) => player.playChunk(chunk));
       await capture.start(
-        (chunk) => sessions.sendAudioChunk(chunk),
-        () => sessions.commitAndTranslate(),
+        (chunk) => session.sendAudioChunk(chunk),
+        () => session.commitAndTranslate(),
+        () => session.clearAudioBuffer(),
         config.chunkIntervalMs,
       );
-      sessions.connect(config, (chunk) => player.playChunk(chunk));
       setIsRunning(true);
     } catch {
+      session.disconnect();
       alert('マイクへのアクセスが拒否されました。ブラウザの設定を確認してください。');
     }
-  }, [capture, sessions, config, player]);
+  }, [capture, session, config, player]);
 
   const handleStop = useCallback(() => {
     capture.stop();
     player.stopAll();
-    sessions.disconnect();
+    session.disconnect();
     setIsRunning(false);
-  }, [capture, player, sessions]);
+  }, [capture, player, session]);
 
   const speakerA = config.speakerA;
   const speakerB = config.speakerB;
 
   const statusLabel = (() => {
     if (!isRunning) return '停止中';
-    if (!sessions.isConnected) return '接続中…';
+    if (!session.isConnected) return '接続中…';
     if (capture.isSpeechDetected) return '発話検出中 — 通訳中';
     return '待機中 — 話しかけてください';
   })();
 
   const statusClass = (() => {
-    if (!isRunning || !sessions.isConnected) return 'status-idle';
+    if (!isRunning || !session.isConnected) return 'status-idle';
     if (capture.isSpeechDetected) return 'status-speaking';
     return 'status-ready';
   })();
+
+  const flagFor = (lang: 'ja' | 'en') => (lang === 'ja' ? '🇯🇵' : '🇺🇸');
 
   return (
     <div className="panel">
@@ -86,34 +90,26 @@ export function InterpreterPanel({ config, onReset }: Props) {
           color={capture.isSpeechDetected ? '#4ade80' : '#4f6ef7'}
         />
 
-        {isRunning && sessions.isConnected && (
+        {isRunning && session.isConnected && (
           <div className="speaker-indicators">
             <div className="speaker-indicator speaker-indicator-a">
-              <span className="si-flag">
-                {speakerA.language === 'ja' ? '🇯🇵' : '🇺🇸'}
-              </span>
+              <span className="si-flag">{flagFor(speakerA.language)}</span>
               <span className="si-name">{speakerA.name}</span>
               <span className="si-arrow">→</span>
-              <span className="si-flag">
-                {speakerA.language === 'ja' ? '🇺🇸' : '🇯🇵'}
-              </span>
+              <span className="si-flag">{flagFor(speakerA.language === 'ja' ? 'en' : 'ja')}</span>
             </div>
             <div className="si-sep">|</div>
             <div className="speaker-indicator speaker-indicator-b">
-              <span className="si-flag">
-                {speakerB.language === 'ja' ? '🇯🇵' : '🇺🇸'}
-              </span>
+              <span className="si-flag">{flagFor(speakerB.language)}</span>
               <span className="si-name">{speakerB.name}</span>
               <span className="si-arrow">→</span>
-              <span className="si-flag">
-                {speakerB.language === 'ja' ? '🇺🇸' : '🇯🇵'}
-              </span>
+              <span className="si-flag">{flagFor(speakerB.language === 'ja' ? 'en' : 'ja')}</span>
             </div>
           </div>
         )}
 
         <div className="visualizer-hint">
-          {isRunning && sessions.isConnected
+          {isRunning && session.isConnected
             ? 'マイクに向かって話しかけてください — 自動で言語を判別します'
             : isRunning
             ? '接続中…'
@@ -123,8 +119,8 @@ export function InterpreterPanel({ config, onReset }: Props) {
 
       <div className="transcript-section">
         <TranscriptDisplay
-          segments={sessions.transcripts}
-          onClear={sessions.clearTranscripts}
+          segments={session.transcripts}
+          onClear={session.clearTranscripts}
         />
       </div>
 
