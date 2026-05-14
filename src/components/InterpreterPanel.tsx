@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { SessionConfig } from '../types/realtime';
-import { useInterpreterSessions } from '../hooks/useInterpreterSessions';
+import { useInterpreterSession } from '../hooks/useInterpreterSession';
 import { useAudioCapture } from '../hooks/useAudioCapture';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { AudioVisualizer } from './AudioVisualizer';
@@ -14,7 +14,7 @@ interface Props {
 export function InterpreterPanel({ config, onReset }: Props) {
   const [isRunning, setIsRunning] = useState(false);
 
-  const sessions = useInterpreterSessions();
+  const sessions = useInterpreterSession();
   const capture = useAudioCapture();
   const player = useAudioPlayer(
     useCallback((playing: boolean) => capture.setIsPlaying(playing), [capture]),
