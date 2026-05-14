@@ -2,9 +2,18 @@ import { useRef, useCallback, useState } from 'react';
 import { float32ToPCM16, pcm16ToBase64, calculateRMS, SAMPLE_RATE } from '../utils/audioUtils';
 
 const BUFFER_SIZE = 2048;
-const VAD_THRESHOLD = 0.018;   // RMS amplitude — raise if ambient noise triggers false starts
-const VAD_SILENCE_MS = 400;    // silence duration before speech-stop is declared
-const MIN_SPEECH_MS = 600;     // minimum speech duration to commit (prevents noise commits)
+
+// Two-threshold VAD:
+// VAD_THRESHOLD   — low threshold to START tracking potential speech (volume indicator)
+// SPEECH_THRESHOLD — must be EXCEEDED at least once to confirm real speech and allow commit
+//   Typical values by environment:
+//     Silent office / headset : SPEECH_THRESHOLD 0.030–0.050
+//     Noisy environment       : raise SPEECH_THRESHOLD to 0.060–0.080
+const VAD_THRESHOLD = 0.015;
+const SPEECH_THRESHOLD = 0.045;
+
+const VAD_SILENCE_MS = 500;  // silence after speech before speech-stop declared
+const MIN_SPEECH_MS = 700;   // minimum sustained speech to commit (drops typing / clicks)
 
 export function useAudioCapture() {
   const [isCapturing, setIsCapturing] = useState(false);
@@ -24,6 +33,7 @@ export function useAudioCapture() {
   // VAD state
   const isSpeakingRef = useRef(false);
   const speechStartTimeRef = useRef<number | null>(null);
+  const speechConfirmedRef = useRef(false); // true once RMS exceeded SPEECH_THRESHOLD
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasBufferedAudioRef = useRef(false);
@@ -37,10 +47,13 @@ export function useAudioCapture() {
     if (isSpeakingRef.current) return;
     isSpeakingRef.current = true;
     speechStartTimeRef.current = Date.now();
+    speechConfirmedRef.current = false; // reset confirmation for this utterance
     setIsSpeechDetected(true);
 
+    // Commit a chunk every chunkIntervalMs while speaking (low-latency translation).
+    // Only commits if speech reached the confirmation threshold.
     chunkTimerRef.current = setInterval(() => {
-      if (hasBufferedAudioRef.current) {
+      if (hasBufferedAudioRef.current && speechConfirmedRef.current) {
         hasBufferedAudioRef.current = false;
         onChunkReadyRef.current?.();
       }
@@ -63,14 +76,22 @@ export function useAudioCapture() {
       chunkTimerRef.current = null;
     }
 
-    if (hasBufferedAudioRef.current && duration >= MIN_SPEECH_MS) {
+    // Commit final chunk only if:
+    //   1. there is buffered audio
+    //   2. speech lasted long enough (not just a click/cough)
+    //   3. RMS peaked above the confirmation threshold (not just ambient noise)
+    if (
+      hasBufferedAudioRef.current &&
+      duration >= MIN_SPEECH_MS &&
+      speechConfirmedRef.current
+    ) {
       hasBufferedAudioRef.current = false;
       onChunkReadyRef.current?.();
     } else {
-      // Speech was too short — discard and clear the server-side buffer
       hasBufferedAudioRef.current = false;
-      onDiscardRef.current?.();
+      onDiscardRef.current?.(); // clear server-side buffer
     }
+    speechConfirmedRef.current = false;
   }, []);
 
   const start = useCallback(
@@ -113,6 +134,11 @@ export function useAudioCapture() {
         setVolume(rms);
 
         if (rms > VAD_THRESHOLD) {
+          // Check if this buffer peaks above the speech confirmation threshold
+          if (rms >= SPEECH_THRESHOLD) {
+            speechConfirmedRef.current = true;
+          }
+
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current);
             silenceTimerRef.current = null;
@@ -152,6 +178,7 @@ export function useAudioCapture() {
 
     isSpeakingRef.current = false;
     hasBufferedAudioRef.current = false;
+    speechConfirmedRef.current = false;
     speechStartTimeRef.current = null;
     setIsCapturing(false);
     setVolume(0);
