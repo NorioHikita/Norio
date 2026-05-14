@@ -1,73 +1,85 @@
-# React + TypeScript + Vite
+# Realtime Interpreter 🇯🇵 ⇄ 🇺🇸
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+GPT-4o Realtime API を使った日英・英日リアルタイム同時通訳アプリです。
 
-Currently, two official plugins are available:
+- 発話の途切れ（約200ms）を検出して即座に通訳を開始
+- 日本語・英語を自動検出して双方向に対応
+- 通訳音声をリアルタイムストリーミング再生
+- 原文・訳文をテキストでも表示
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## 必要なもの
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| 項目 | 内容 |
+|------|------|
+| **OS** | Windows 10 / 11 |
+| **Node.js** | v18以上（LTS版推奨） |
+| **OpenAI APIキー** | `gpt-4o-realtime-preview` が有効なキー |
+| **マイク** | PCに内蔵マイクまたは外付けマイク |
+| **ブラウザ** | Google Chrome または Microsoft Edge（推奨） |
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## セットアップ手順
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### Step 1：Node.js のインストール（初回のみ）
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+1. ブラウザで https://nodejs.org/ja/ を開く
+2. **「LTS（推奨版）」** ボタンをクリックしてダウンロード
+3. ダウンロードしたファイルを実行してインストール
+   - すべての画面で「Next」→「Install」でOK
+4. インストール後、コマンドプロンプトを開いて確認：
+   ```
+   node -v
+   ```
+   `v22.x.x` のようなバージョンが表示されればOK
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+### Step 2：アプリの起動
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+1. `start.bat` をダブルクリック
+2. 初回のみ自動でパッケージがインストールされます（2〜3分）
+3. ブラウザが自動で開き、セットアップ画面が表示されます
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Step 3：APIキーを設定して開始
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+1. OpenAI APIキー（`sk-...` で始まる文字列）を入力
+2. 通訳音声を選択（Shimmer推奨）
+3. 「通訳を開始する」をクリック
+
+---
+
+## 使い方
+
+1. 「▶ 通訳を開始」ボタンをクリック
+2. マイクへのアクセスを許可
+3. マイクに向かって話すと自動で通訳されます
+   - **日本語で話す** → 英語に通訳して音声再生
+   - **英語で話す** → 日本語に通訳して音声再生
+4. 終了するには「■ 停止」をクリック
+
+---
+
+## アプリの終了
+
+- ブラウザのタブを閉じる
+- `start.bat` のウィンドウを閉じる（またはウィンドウ内で `Ctrl+C`）
+
+---
+
+## トラブルシューティング
+
+| 症状 | 対処 |
+|------|------|
+| ブラウザが開かない | `http://localhost:5173` を手動で入力 |
+| マイクが反応しない | ブラウザのアドレスバー左の🔒アイコン→マイクを「許可」 |
+| 「API エラー」が表示される | APIキーが正しいか確認。`gpt-4o-realtime-preview` の利用権限があるか確認 |
+| 音声が出ない | ブラウザのスピーカー設定を確認 |
+
+---
+
+## セキュリティについて
+
+- OpenAI APIキーはあなたのブラウザ内（localStorage）にのみ保存されます
+- キーはインターネット上に送信されません（OpenAI APIに直接接続するのみ）
+- 共有PCで使用する場合は、使用後にブラウザのサイトデータを消去することを推奨します
