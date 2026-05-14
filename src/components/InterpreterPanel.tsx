@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { SessionConfig, SpeakerId } from '../types/realtime';
+import type { SessionConfig } from '../types/realtime';
 import { useInterpreterSessions } from '../hooks/useInterpreterSessions';
 import { useAudioCapture } from '../hooks/useAudioCapture';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
@@ -13,29 +13,18 @@ interface Props {
 
 export function InterpreterPanel({ config, onReset }: Props) {
   const [isRunning, setIsRunning] = useState(false);
-  const [activeSpeaker, setActiveSpeaker] = useState<SpeakerId | null>(null);
 
   const sessions = useInterpreterSessions();
   const capture = useAudioCapture();
-
   const player = useAudioPlayer(
     useCallback((playing: boolean) => capture.setIsPlaying(playing), [capture]),
   );
 
-  // Keep activeSpeaker accessible in stable audio callbacks
-  const activeSpeakerStableRef = { current: activeSpeaker };
-
   const handleStart = useCallback(async () => {
     try {
       await capture.start(
-        (chunk) => {
-          const spk = activeSpeakerStableRef.current;
-          if (spk) sessions.sendAudioChunk(chunk, spk);
-        },
-        () => {
-          const spk = activeSpeakerStableRef.current;
-          if (spk) sessions.commitAndTranslate(spk);
-        },
+        (chunk) => sessions.sendAudioChunk(chunk),
+        () => sessions.commitAndTranslate(),
         config.chunkIntervalMs,
       );
       sessions.connect(config, (chunk) => player.playChunk(chunk));
@@ -43,14 +32,12 @@ export function InterpreterPanel({ config, onReset }: Props) {
     } catch {
       alert('マイクへのアクセスが拒否されました。ブラウザの設定を確認してください。');
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [capture, sessions, config, player]);
 
   const handleStop = useCallback(() => {
     capture.stop();
     player.stopAll();
     sessions.disconnect();
-    setActiveSpeaker(null);
     setIsRunning(false);
   }, [capture, player, sessions]);
 
@@ -60,17 +47,14 @@ export function InterpreterPanel({ config, onReset }: Props) {
   const statusLabel = (() => {
     if (!isRunning) return '停止中';
     if (!sessions.isConnected) return '接続中…';
-    if (activeSpeaker === 'A' && capture.isSpeechDetected) return `${speakerA.name} 発話中`;
-    if (activeSpeaker === 'B' && capture.isSpeechDetected) return `${speakerB.name} 発話中`;
-    if (activeSpeaker) return `${activeSpeaker === 'A' ? speakerA.name : speakerB.name} 待機中`;
-    return '話者を選択してください';
+    if (capture.isSpeechDetected) return '発話検出中 — 通訳中';
+    return '待機中 — 話しかけてください';
   })();
 
   const statusClass = (() => {
     if (!isRunning || !sessions.isConnected) return 'status-idle';
-    if (capture.isSpeechDetected) return activeSpeaker === 'A' ? 'status-speaker-a' : 'status-speaker-b';
-    if (activeSpeaker) return 'status-ready';
-    return 'status-idle';
+    if (capture.isSpeechDetected) return 'status-speaking';
+    return 'status-ready';
   })();
 
   return (
@@ -99,11 +83,38 @@ export function InterpreterPanel({ config, onReset }: Props) {
         <AudioVisualizer
           volume={capture.volume}
           isActive={isRunning && capture.isSpeechDetected}
-          color={activeSpeaker === 'A' ? '#4f6ef7' : activeSpeaker === 'B' ? '#34d399' : '#4f6ef7'}
+          color={capture.isSpeechDetected ? '#4ade80' : '#4f6ef7'}
         />
+
+        {isRunning && sessions.isConnected && (
+          <div className="speaker-indicators">
+            <div className="speaker-indicator speaker-indicator-a">
+              <span className="si-flag">
+                {speakerA.language === 'ja' ? '🇯🇵' : '🇺🇸'}
+              </span>
+              <span className="si-name">{speakerA.name}</span>
+              <span className="si-arrow">→</span>
+              <span className="si-flag">
+                {speakerA.language === 'ja' ? '🇺🇸' : '🇯🇵'}
+              </span>
+            </div>
+            <div className="si-sep">|</div>
+            <div className="speaker-indicator speaker-indicator-b">
+              <span className="si-flag">
+                {speakerB.language === 'ja' ? '🇯🇵' : '🇺🇸'}
+              </span>
+              <span className="si-name">{speakerB.name}</span>
+              <span className="si-arrow">→</span>
+              <span className="si-flag">
+                {speakerB.language === 'ja' ? '🇺🇸' : '🇯🇵'}
+              </span>
+            </div>
+          </div>
+        )}
+
         <div className="visualizer-hint">
           {isRunning && sessions.isConnected
-            ? '話す人のボタンを押してください'
+            ? 'マイクに向かって話しかけてください — 自動で言語を判別します'
             : isRunning
             ? '接続中…'
             : '通訳を開始してください'}
@@ -118,59 +129,20 @@ export function InterpreterPanel({ config, onReset }: Props) {
       </div>
 
       <footer className="panel-footer">
-        {isRunning && sessions.isConnected ? (
-          <div className="speaker-controls">
-            <button
-              className={`speaker-btn speaker-btn-a ${activeSpeaker === 'A' ? 'active' : ''}`}
-              onClick={() => setActiveSpeaker((s) => (s === 'A' ? null : 'A'))}
-            >
-              <span className="speaker-btn-label">A</span>
-              <span className="speaker-btn-name">{speakerA.name}</span>
-              <span className="speaker-btn-lang">
-                {speakerA.language === 'ja' ? '🇯🇵 日本語' : '🇺🇸 English'}
-                {' → '}
-                {speakerA.language === 'ja' ? '🇺🇸 English' : '🇯🇵 日本語'}
-              </span>
-              {activeSpeaker === 'A' && (
-                <span className="speaker-btn-active-dot" />
-              )}
-            </button>
+        <div className="footer-info">
+          <span className="info-chip">🤖 自動言語判別</span>
+          <span className="info-chip">⚡ 発話直後に通訳開始</span>
+          <span className="info-chip">🔄 双方向・ボタンなし</span>
+        </div>
 
-            <button
-              className={`speaker-btn speaker-btn-b ${activeSpeaker === 'B' ? 'active' : ''}`}
-              onClick={() => setActiveSpeaker((s) => (s === 'B' ? null : 'B'))}
-            >
-              <span className="speaker-btn-label">B</span>
-              <span className="speaker-btn-name">{speakerB.name}</span>
-              <span className="speaker-btn-lang">
-                {speakerB.language === 'ja' ? '🇯🇵 日本語' : '🇺🇸 English'}
-                {' → '}
-                {speakerB.language === 'ja' ? '🇺🇸 English' : '🇯🇵 日本語'}
-              </span>
-              {activeSpeaker === 'B' && (
-                <span className="speaker-btn-active-dot" />
-              )}
-            </button>
-
-            <button className="btn-danger btn-stop-inline" onClick={handleStop}>
-              ■ 停止
-            </button>
-          </div>
+        {!isRunning ? (
+          <button className="btn-primary btn-large" onClick={handleStart}>
+            ▶ 通訳を開始
+          </button>
         ) : (
-          <div className="footer-start-row">
-            <div className="footer-info">
-              <span className="info-chip">⚡ チャンク同時通訳</span>
-              <span className="info-chip">🚫 言語検出なし</span>
-              <span className="info-chip">🔄 双方向対応</span>
-            </div>
-            {!isRunning ? (
-              <button className="btn-primary btn-large" onClick={handleStart}>
-                ▶ 通訳を開始
-              </button>
-            ) : (
-              <span className="connecting-msg">接続中…</span>
-            )}
-          </div>
+          <button className="btn-danger btn-large" onClick={handleStop}>
+            ■ 停止
+          </button>
         )}
       </footer>
     </div>

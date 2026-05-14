@@ -444,6 +444,26 @@ button { cursor: pointer; font-family: inherit; }
   padding: 3px 10px;
 }
 
+/* ── Speaker indicator bar (shown during interpretation) ── */
+.speaker-indicators {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.speaker-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.speaker-indicator-a { color: #7c9ef7; }
+.speaker-indicator-b { color: #34d399; }
+.si-flag { font-size: 16px; }
+.si-name { font-weight: 600; color: var(--text); }
+.si-arrow { font-size: 11px; }
+.si-sep { color: var(--border); font-size: 18px; }
+
 /* ── Speaker setup inputs ── */
 .speakers-row {
   display: flex;

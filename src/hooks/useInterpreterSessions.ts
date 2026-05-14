@@ -7,19 +7,25 @@ const MODEL = 'gpt-4o-realtime-preview-2024-12-17';
 const LANG_LABEL: Record<Language, string> = { ja: 'Japanese', en: 'English' };
 const LANG_LABEL_JA: Record<Language, string> = { ja: '日本語', en: 'English' };
 
-function buildInstructions(fromLang: Language, toLang: Language): string {
+/**
+ * Each session is given a strict "only respond if MY language is spoken" instruction.
+ * If the wrong language is heard, the model outputs nothing → automatic speaker routing
+ * without any button presses.
+ */
+function buildInstructions(myLang: Language, targetLang: Language): string {
   return `You are a professional simultaneous interpreter.
-The speaker is speaking ${LANG_LABEL[fromLang]}. Translate their speech into ${LANG_LABEL[toLang]} simultaneously.
 
-Critical rules:
-- Begin speaking your ${LANG_LABEL[toLang]} translation AS SOON AS you understand the first phrase — do NOT wait for the speaker to finish
-- Output ONLY the ${LANG_LABEL[toLang]} translation. Never output the original ${LANG_LABEL[fromLang]}.
-- Speak at a natural pace that mirrors the speaker
-- Match formality, tone, and nuance
-- If input is just noise or silence, stay silent`;
+Your ONLY job: listen to the audio and translate ${LANG_LABEL[myLang]} into ${LANG_LABEL[targetLang]}.
+
+Rules — follow these exactly:
+1. If the speaker is speaking ${LANG_LABEL[myLang]}: immediately begin your ${LANG_LABEL[targetLang]} translation. Start as soon as you understand the first phrase — do NOT wait for the speaker to finish.
+2. If the speech is in ${LANG_LABEL[targetLang]} or any other language: output NOTHING. Complete silence. Do not acknowledge, do not explain, just stay silent.
+3. Output ONLY the ${LANG_LABEL[targetLang]} translation — never repeat the original ${LANG_LABEL[myLang]}.
+4. Match the speaker's tone, formality, and pace.
+5. If you hear only silence or ambient noise: output NOTHING.`;
 }
 
-interface SingleSessionState {
+interface SessionState {
   ws: WebSocket | null;
   responseActive: boolean;
   pendingCommit: boolean;
@@ -36,35 +42,30 @@ export function useInterpreterSessions() {
 
   const onAudioPlayChunkRef = useRef<((chunk: string) => void) | null>(null);
 
-  // Per-speaker session state held in refs (not React state) to avoid stale closures
-  const sessA = useRef<SingleSessionState>({
+  const sessA = useRef<SessionState>({
     ws: null, responseActive: false, pendingCommit: false, currentSegmentId: null,
   });
-  const sessB = useRef<SingleSessionState>({
+  const sessB = useRef<SessionState>({
     ws: null, responseActive: false, pendingCommit: false, currentSegmentId: null,
   });
 
-  const getSess = useCallback((speaker: SpeakerId) =>
-    speaker === 'A' ? sessA.current : sessB.current,
-  []);
+  // ── Response queue ──────────────────────────────────────────────────────────
 
-  // ── Response queue management ──────────────────────────────────────────────
-
-  const startResponse = useCallback((sess: SingleSessionState) => {
+  const startResponse = useCallback((sess: SessionState) => {
     if (!sess.ws || sess.ws.readyState !== WebSocket.OPEN) return;
     sess.responseActive = true;
     sess.pendingCommit = false;
     sess.ws.send(JSON.stringify({ type: 'response.create' }));
   }, []);
 
-  // ── Event handlers per session ─────────────────────────────────────────────
+  // ── Event handler ───────────────────────────────────────────────────────────
 
   const handleEvent = useCallback(
     (ev: Record<string, unknown>, speaker: SpeakerId, config: SessionConfig) => {
       const sess = speaker === 'A' ? sessA.current : sessB.current;
       const speakerCfg = speaker === 'A' ? config.speakerA : config.speakerB;
+      const otherLang: Language = speakerCfg.language === 'ja' ? 'en' : 'ja';
       const direction: Direction = speakerCfg.language === 'ja' ? 'ja-en' : 'en-ja';
-      const otherLang = speakerCfg.language === 'ja' ? 'en' : 'ja';
 
       switch (ev.type) {
         case 'response.created': {
@@ -102,19 +103,26 @@ export function useInterpreterSessions() {
           break;
         }
 
-        case 'response.done':
-          if (sess.currentSegmentId) {
-            const id = sess.currentSegmentId;
-            setTranscripts((prev) =>
-              prev.map((s) => (s.id === id ? { ...s, outputStreaming: false } : s)),
-            );
-          }
+        // When the model decides to stay silent, the response will complete with no audio/text.
+        // We remove the empty placeholder segment to keep the transcript clean.
+        case 'response.done': {
           sess.responseActive = false;
-          // If audio was committed while response was active, start the next response
-          if (sess.pendingCommit) {
-            startResponse(sess);
+          const segId = sess.currentSegmentId;
+          if (segId) {
+            setTranscripts((prev) => {
+              const seg = prev.find((s) => s.id === segId);
+              // Drop empty segments (model stayed silent for the wrong language)
+              if (seg && seg.outputText.trim() === '') {
+                return prev.filter((s) => s.id !== segId);
+              }
+              return prev.map((s) =>
+                s.id === segId ? { ...s, outputStreaming: false } : s,
+              );
+            });
           }
+          if (sess.pendingCommit) startResponse(sess);
           break;
+        }
 
         case 'error':
           console.error(`Session ${speaker} error:`, ev);
@@ -125,18 +133,15 @@ export function useInterpreterSessions() {
     [startResponse],
   );
 
-  // ── Connect both sessions ──────────────────────────────────────────────────
+  // ── Connect ─────────────────────────────────────────────────────────────────
 
   const connectSession = useCallback(
     (speaker: SpeakerId, config: SessionConfig) => {
       const sess = speaker === 'A' ? sessA.current : sessB.current;
       const speakerCfg = speaker === 'A' ? config.speakerA : config.speakerB;
-      const otherLang = speakerCfg.language === 'ja' ? 'en' : 'ja';
+      const otherLang: Language = speakerCfg.language === 'ja' ? 'en' : 'ja';
 
-      if (sess.ws) {
-        sess.ws.close();
-        sess.ws = null;
-      }
+      sess.ws?.close();
 
       const ws = new WebSocket(`${REALTIME_URL}?model=${MODEL}`, [
         'realtime',
@@ -150,20 +155,17 @@ export function useInterpreterSessions() {
           type: 'session.update',
           session: {
             modalities: ['text', 'audio'],
-            instructions: buildInstructions(speakerCfg.language, otherLang as Language),
+            instructions: buildInstructions(speakerCfg.language, otherLang),
             voice: config.voice,
             input_audio_format: 'pcm16',
             output_audio_format: 'pcm16',
-            // Disable server VAD — we commit manually for immediate translation
-            turn_detection: null,
+            turn_detection: null, // manual chunking for minimal latency
           },
         }));
 
-        // Both sessions connected when both are open
-        if (sessA.current.ws?.readyState === WebSocket.OPEN &&
-            sessB.current.ws?.readyState === WebSocket.OPEN) {
-          setIsConnected(true);
-        }
+        const aReady = sessA.current.ws?.readyState === WebSocket.OPEN;
+        const bReady = sessB.current.ws?.readyState === WebSocket.OPEN;
+        if (aReady && bReady) setIsConnected(true);
       };
 
       ws.onmessage = (event) => {
@@ -175,7 +177,6 @@ export function useInterpreterSessions() {
       };
 
       ws.onerror = () => console.error(`Session ${speaker} WebSocket error`);
-
       ws.onclose = () => {
         sess.responseActive = false;
         sess.pendingCommit = false;
@@ -194,44 +195,37 @@ export function useInterpreterSessions() {
     [connectSession],
   );
 
-  // ── Audio routing ──────────────────────────────────────────────────────────
+  // ── Audio routing — BOTH sessions receive every chunk ───────────────────────
 
-  const sendAudioChunk = useCallback((base64: string, speaker: SpeakerId) => {
-    const sess = getSess(speaker);
-    if (sess.ws?.readyState === WebSocket.OPEN) {
-      sess.ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: base64 }));
+  const sendAudioChunk = useCallback((base64: string) => {
+    for (const sess of [sessA.current, sessB.current]) {
+      if (sess.ws?.readyState === WebSocket.OPEN) {
+        sess.ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: base64 }));
+      }
     }
-  }, [getSess]);
+  }, []);
 
-  // Called by the chunk timer — commit current buffer and trigger translation
-  const commitAndTranslate = useCallback((speaker: SpeakerId) => {
-    const sess = getSess(speaker);
-    if (!sess.ws || sess.ws.readyState !== WebSocket.OPEN) return;
-
-    // Commit current audio buffer (creates a conversation item)
-    sess.ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-
-    if (!sess.responseActive) {
-      startResponse(sess);
-    } else {
-      // A response is in progress — flag that we have more committed audio
-      sess.pendingCommit = true;
+  const commitAndTranslate = useCallback(() => {
+    for (const sess of [sessA.current, sessB.current]) {
+      if (!sess.ws || sess.ws.readyState !== WebSocket.OPEN) continue;
+      sess.ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+      if (!sess.responseActive) {
+        startResponse(sess);
+      } else {
+        sess.pendingCommit = true;
+      }
     }
-  }, [getSess, startResponse]);
+  }, [startResponse]);
 
-  // ── Disconnect ─────────────────────────────────────────────────────────────
+  // ── Disconnect ──────────────────────────────────────────────────────────────
 
   const disconnect = useCallback(() => {
-    sessA.current.ws?.close();
-    sessA.current.ws = null;
-    sessA.current.responseActive = false;
-    sessA.current.pendingCommit = false;
-
-    sessB.current.ws?.close();
-    sessB.current.ws = null;
-    sessB.current.responseActive = false;
-    sessB.current.pendingCommit = false;
-
+    for (const sess of [sessA.current, sessB.current]) {
+      sess.ws?.close();
+      sess.ws = null;
+      sess.responseActive = false;
+      sess.pendingCommit = false;
+    }
     setIsConnected(false);
   }, []);
 
