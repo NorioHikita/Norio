@@ -7,29 +7,62 @@ const MODEL = 'gpt-4o-realtime-preview-2024-12-17';
 const LANG_LABEL: Record<Language, string> = { ja: 'Japanese', en: 'English' };
 const LANG_LABEL_JA: Record<Language, string> = { ja: '日本語', en: 'English' };
 
-/**
- * Each session is given a strict "only respond if MY language is spoken" instruction.
- * If the wrong language is heard, the model outputs nothing → automatic speaker routing
- * without any button presses.
- */
 function buildInstructions(myLang: Language, targetLang: Language): string {
-  return `You are a professional simultaneous interpreter.
+  return `You are a translation-only tool. You have exactly one function: translate spoken ${LANG_LABEL[myLang]} into ${LANG_LABEL[targetLang]}.
 
-Your ONLY job: listen to the audio and translate ${LANG_LABEL[myLang]} into ${LANG_LABEL[targetLang]}.
-
-Rules — follow these exactly:
-1. If the speaker is speaking ${LANG_LABEL[myLang]}: immediately begin your ${LANG_LABEL[targetLang]} translation. Start as soon as you understand the first phrase — do NOT wait for the speaker to finish.
-2. If the speech is in ${LANG_LABEL[targetLang]} or any other language: output NOTHING. Complete silence. Do not acknowledge, do not explain, just stay silent.
-3. Output ONLY the ${LANG_LABEL[targetLang]} translation — never repeat the original ${LANG_LABEL[myLang]}.
-4. Match the speaker's tone, formality, and pace.
-5. If you hear only silence or ambient noise: output NOTHING.`;
+ABSOLUTE RULES — zero exceptions:
+1. If the audio clearly contains ${LANG_LABEL[myLang]} speech: output the ${LANG_LABEL[targetLang]} translation of the EXACT words spoken. Nothing added, nothing removed.
+2. If the audio is ${LANG_LABEL[targetLang]}, another language, silence, noise, or unclear: produce ZERO output. Not one character. Silence only.
+3. You are NOT a conversational assistant. You NEVER greet, instruct, guide, or comment.
+4. FORBIDDEN outputs include but are not limited to: "Please speak in ${LANG_LABEL[myLang]}", "I will translate", "Please continue", "Sure", "【沈黙】", "silence", "(no speech)", "...".
+5. You do NOT explain that you heard silence. You do NOT acknowledge unclear audio. You simply output nothing.
+6. Your ONLY permitted output is the verbatim ${LANG_LABEL[targetLang]} translation of clearly spoken ${LANG_LABEL[myLang]} words.`;
 }
+
+// ── Output validation ──────────────────────────────────────────────────────────
+
+// Patterns that indicate the model generated meta-commentary instead of translating
+const META_PATTERNS = [
+  /please (start )?speak/i,
+  /i will translate/i,
+  /please (go ahead|continue)/i,
+  /^sure[,.]?\s/i,
+  /【.*?】/,
+  /^\(.*?\)$/,
+  /^\.{2,}$/,
+  /no speech/i,
+  /silence/i,
+  /沈黙/,
+  /unclear/i,
+  /i (don't|cannot|can't) (hear|understand)/i,
+];
+
+function isMeta(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0) return true;
+  return META_PATTERNS.some((p) => p.test(t));
+}
+
+// If the output language is wrong (e.g. JA→EN session outputs Japanese), discard
+function isWrongOutputLanguage(text: string, direction: Direction): boolean {
+  const hasJapanese = /[぀-ゟ゠-ヿ一-鿿]/.test(text);
+  if (direction === 'ja-en' && hasJapanese) return true;   // should be English
+  if (direction === 'en-ja' && !hasJapanese && text.trim().length > 4) return true; // should be Japanese
+  return false;
+}
+
+function shouldDiscard(text: string, direction: Direction): boolean {
+  return text.trim() === '' || isMeta(text) || isWrongOutputLanguage(text, direction);
+}
+
+// ── Session state ──────────────────────────────────────────────────────────────
 
 interface SessionState {
   ws: WebSocket | null;
   responseActive: boolean;
   pendingCommit: boolean;
   currentSegmentId: string | null;
+  direction: Direction;
 }
 
 function newSegmentId() {
@@ -43,13 +76,15 @@ export function useInterpreterSessions() {
   const onAudioPlayChunkRef = useRef<((chunk: string) => void) | null>(null);
 
   const sessA = useRef<SessionState>({
-    ws: null, responseActive: false, pendingCommit: false, currentSegmentId: null,
+    ws: null, responseActive: false, pendingCommit: false,
+    currentSegmentId: null, direction: 'ja-en',
   });
   const sessB = useRef<SessionState>({
-    ws: null, responseActive: false, pendingCommit: false, currentSegmentId: null,
+    ws: null, responseActive: false, pendingCommit: false,
+    currentSegmentId: null, direction: 'en-ja',
   });
 
-  // ── Response queue ──────────────────────────────────────────────────────────
+  // ── Response queue ─────────────────────────────────────────────────────────
 
   const startResponse = useCallback((sess: SessionState) => {
     if (!sess.ws || sess.ws.readyState !== WebSocket.OPEN) return;
@@ -58,14 +93,14 @@ export function useInterpreterSessions() {
     sess.ws.send(JSON.stringify({ type: 'response.create' }));
   }, []);
 
-  // ── Event handler ───────────────────────────────────────────────────────────
+  // ── Event handler ──────────────────────────────────────────────────────────
 
   const handleEvent = useCallback(
     (ev: Record<string, unknown>, speaker: SpeakerId, config: SessionConfig) => {
       const sess = speaker === 'A' ? sessA.current : sessB.current;
       const speakerCfg = speaker === 'A' ? config.speakerA : config.speakerB;
       const otherLang: Language = speakerCfg.language === 'ja' ? 'en' : 'ja';
-      const direction: Direction = speakerCfg.language === 'ja' ? 'ja-en' : 'en-ja';
+      const direction = sess.direction;
 
       switch (ev.type) {
         case 'response.created': {
@@ -103,16 +138,16 @@ export function useInterpreterSessions() {
           break;
         }
 
-        // When the model decides to stay silent, the response will complete with no audio/text.
-        // We remove the empty placeholder segment to keep the transcript clean.
         case 'response.done': {
           sess.responseActive = false;
           const segId = sess.currentSegmentId;
           if (segId) {
             setTranscripts((prev) => {
               const seg = prev.find((s) => s.id === segId);
-              // Drop empty segments (model stayed silent for the wrong language)
-              if (seg && seg.outputText.trim() === '') {
+              if (!seg) return prev;
+
+              // Discard: empty, meta-commentary, or wrong output language
+              if (shouldDiscard(seg.outputText, direction)) {
                 return prev.filter((s) => s.id !== segId);
               }
               return prev.map((s) =>
@@ -133,13 +168,14 @@ export function useInterpreterSessions() {
     [startResponse],
   );
 
-  // ── Connect ─────────────────────────────────────────────────────────────────
+  // ── Connect ────────────────────────────────────────────────────────────────
 
   const connectSession = useCallback(
     (speaker: SpeakerId, config: SessionConfig) => {
       const sess = speaker === 'A' ? sessA.current : sessB.current;
       const speakerCfg = speaker === 'A' ? config.speakerA : config.speakerB;
       const otherLang: Language = speakerCfg.language === 'ja' ? 'en' : 'ja';
+      sess.direction = speakerCfg.language === 'ja' ? 'ja-en' : 'en-ja';
 
       sess.ws?.close();
 
@@ -159,13 +195,13 @@ export function useInterpreterSessions() {
             voice: config.voice,
             input_audio_format: 'pcm16',
             output_audio_format: 'pcm16',
-            turn_detection: null, // manual chunking for minimal latency
+            turn_detection: null,
           },
         }));
 
-        const aReady = sessA.current.ws?.readyState === WebSocket.OPEN;
-        const bReady = sessB.current.ws?.readyState === WebSocket.OPEN;
-        if (aReady && bReady) setIsConnected(true);
+        const aOpen = sessA.current.ws?.readyState === WebSocket.OPEN;
+        const bOpen = sessB.current.ws?.readyState === WebSocket.OPEN;
+        if (aOpen && bOpen) setIsConnected(true);
       };
 
       ws.onmessage = (event) => {
@@ -195,7 +231,7 @@ export function useInterpreterSessions() {
     [connectSession],
   );
 
-  // ── Audio routing — BOTH sessions receive every chunk ───────────────────────
+  // ── Audio — both sessions receive every chunk ──────────────────────────────
 
   const sendAudioChunk = useCallback((base64: string) => {
     for (const sess of [sessA.current, sessB.current]) {
@@ -217,7 +253,7 @@ export function useInterpreterSessions() {
     }
   }, [startResponse]);
 
-  // ── Disconnect ──────────────────────────────────────────────────────────────
+  // ── Disconnect ─────────────────────────────────────────────────────────────
 
   const disconnect = useCallback(() => {
     for (const sess of [sessA.current, sessB.current]) {
